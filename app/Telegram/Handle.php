@@ -162,14 +162,21 @@ class Handle extends WebhookHandler
         $dataFromCurrency = Cache::get("exchange-{$this->chat->chat_id}");
         if (!empty($dataFromCurrency)) {
             $result = $this->getDataFromBank();
+            $response = '';
             foreach ($result as $key => $item) {
                 Log::info('test', $item);
-                if(in_array($dataFromCurrency['from'], $item) && in_array($dataFromCurrency['to'], $item)) {
-                    if($item[0] == $dataFromCurrency['from']) {
-
+                if (in_array($dataFromCurrency['from'], $item) && in_array($dataFromCurrency['to'], $item)) {
+                    if ($item[0] == $dataFromCurrency['from']) {
+                        $response = $message->value() * $item['buy'];
+                    }
+                    if ($item[1] == $dataFromCurrency['from']) {
+                        $value = str_replace(',', '', $message->value());
+                        $this->reply($message->value() . " ".$value.' ' . $item['sell']);
+                        $response  = round($value / $item['sell'], 2) ;
                     }
                 }
             }
+            $this->reply($response);
 
         } else {
             try {
