@@ -18,3 +18,12 @@ Artisan::command('help', function () {
     ])->send());
 });
 
+Artisan::command('insert_currency', function () {
+    \App\Models\Currency::insert([
+        ['currency' => 'USD', 'text' => '🇺🇸 USD'],
+        ['currency' => 'EUR', 'text' => '🇪🇺 EUR'],
+        ['currency' => 'MDL', 'text' => '🇲🇩 MDL'],
+        ['currency' => 'RUB', 'text' => '🇷🇺 RUB'],
+        ['currency' => 'RUP', 'text' => '⚒ RUP'],
+    ]);
+});

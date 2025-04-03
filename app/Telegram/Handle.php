@@ -2,7 +2,6 @@
 
 namespace App\Telegram;
 
-use App\Telegram\Currency;
 use DefStudio\Telegraph\Facades\Telegraph;
 use DefStudio\Telegraph\Handlers\WebhookHandler;
 use DefStudio\Telegraph\Keyboard\ReplyButton;
@@ -10,6 +9,7 @@ use DefStudio\Telegraph\Keyboard\ReplyKeyboard;
 use DefStudio\Telegraph\Models\TelegraphChat;
 use DiDom\Document;
 use GuzzleHttp\Client;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Stringable;
 use DefStudio\Telegraph\Keyboard\Keyboard;
 use DefStudio\Telegraph\Keyboard\Button;
@@ -22,26 +22,24 @@ class Handle extends WebhookHandler
 
     public string|null $weatherApi;
     private string|null $botToken;
-
-    private object|null $document;
     private string $bankUrl;
 
-    private array $state;
-    private array $currencyArray = [
-        'USD' => '🇺🇸 USD',
-        'EUR' => '🇪🇺 EUR',
-        'MDL' => '🇲🇩 MDL',
-        'RUB' => '🇷🇺 RUB',
-        'RUP' => '⚒ RUP',
-    ];
+
+    private object|null $document;
+  
+
+
+    private $currencyArray;
 
     public function __construct()
     {
         $this->client = new Client();
-        $this->document = new Document();
         $this->weatherApi = env('WEATHER_API', '');
         $this->botToken = env('BOT_TOKEN', '');
+        $this->currencyArray = DB::table('currency_list')->get();
+        $this->currencyArray = json_decode(json_encode($this->currencyArray), true);
         $this->bankUrl = "https://www.agroprombank.com/";
+        $this->document = new Document();
     }
 
     /**
@@ -51,7 +49,6 @@ class Handle extends WebhookHandler
     {
         $nameUser = $this->message ? $this->message->from()->firstName() : ($this->data ? $this->data->get('name') : '');
         try {
-
             Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
                 ->message("🌤 Привет! *{$nameUser}* Я твой личный бот. Готов помочь узнать погоду и рассчитать валюту в любой момент! что тебе нужно?")
                 ->keyboard(Keyboard::make()->row([
@@ -81,17 +78,15 @@ class Handle extends WebhookHandler
         try {
             $keyboard = Keyboard::make();
             foreach ($this->currencyArray as $key => $currency) {
-                $keyboard->button($currency)->action('exchange')->param('from', $key)->width(1 / count($this->currencyArray));
+                $keyboard->button($currency['text'])->action('exchange')->param('from', $currency['currency'])->param('name', $customerName)->width(1 / count($this->currencyArray));
             }
-            $keyboard->button('🔙 back')->action('start')->param('name', $customerName)->width(1);
+            $keyboard->button('🔙 back')->action('start')->width(1);
             Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
                 ->message("Отлично, выбери *из какой валюты* тебе нужно перевести")
                 ->keyboard($keyboard)->send();
-            Log::info('Message sent successfully!');
         } catch (\Exception $e) {
             Log::error('Error while sending message: ' . $e->getMessage());
         }
-
     }
 
     /**
@@ -101,14 +96,14 @@ class Handle extends WebhookHandler
     {
         $customerName = $this->callbackQuery->from()->firstName();
         $from = $this->data->get('from');
-        if (isset($this->currencyArray[$from])) {
-            unset($this->currencyArray[$from]);
-        }
+
         try {
             $keyboard = Keyboard::make();
-
             foreach ($this->currencyArray as $key => $label) {
-                $keyboard->button($label)->action('exchangeTo')->param('to', $key)->param('from', $from)->width(1 / count($this->currencyArray));
+                if ($label['currency'] == $from) {
+                    continue;
+                }
+                $keyboard->button($label['text'])->action('exchangeTo')->param('to', $label['currency'])->param('from', $from)->width(1 / count($this->currencyArray));
             }
             $keyboard->button('🔙 back')->action('currency')->param('name', $customerName)->width(1);
             Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
@@ -129,10 +124,9 @@ class Handle extends WebhookHandler
         $chatId = $this->chat->chat_id;
         $from = $this->data->get('from');
         $to = $this->data->get('to');
-        $keyboard = Keyboard::make();
-        $keyboard->button('🔙 back')->action('exchange')->param('from', $from)->width(1);
-        Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
-            ->message("Отлично, ты хочешь перевести из *{$from}* в *{$to}*, теперь введи сумму")
+        $keyboard = Keyboard::make()->button('🔙 back')->action('exchange')->param('from', $from)->param('to', $to)->width(1);
+        Telegraph::bot($this->botToken)->chat($chatId)
+            ->message("Отлично, ты хочешь перевести из *{$from}* в *{$to}*. Введи сумму.")
             ->keyboard($keyboard)
             ->send();
         Cache::put("exchange-{$chatId}", [
@@ -143,34 +137,48 @@ class Handle extends WebhookHandler
     }
 
 
+    public function weather()
+    {
+        Telegraph::bot($this->botToken)->chat($this->chat->chat_id)->message("Введи город который тебя интересует")->send();
+        Cache::put("weather-{$this->chat->chat_id}", [
+            'controller' => 'weather'
+        ], now()->addMinutes(10));
+    }
+
+
     protected function handleChatMessage(Stringable $message): void
     {
+        $chatId = $this->chat->chat_id;
         $dataFromCurrency = Cache::get("exchange-{$this->chat->chat_id}");
         $dataFromWeatherSubs = Cache::get("weather_subs-{$this->chat->chat_id}");
         if (!empty($dataFromCurrency)) {
+            if (!is_numeric($message->value())) {
+                $this->reply('Необходимо ввести число');
+                return;
+            }
             $result = $this->getDataFromBank();
             $response = '';
             foreach ($result as $key => $item) {
-                Log::info('test', $item);
                 if (in_array($dataFromCurrency['from'], $item) && in_array($dataFromCurrency['to'], $item)) {
                     if ($item[0] == $dataFromCurrency['from']) {
                         $response = $message->value() * $item['buy'];
                     }
                     if ($item[1] == $dataFromCurrency['from']) {
                         $value = str_replace(',', '', $message->value());
-                        $this->reply($message->value() . " " . $value . ' ' . $item['sell']);
                         $response = round($value / $item['sell'], 2);
                     }
                 }
             }
+
             $this->reply("{$message->value()} *{$dataFromCurrency['from']}* ровняется {$response} *{$dataFromCurrency['to']}*");
 
         } else if (!empty($dataFromWeatherSubs)) {
            Log::info($message->value(), $dataFromWeatherSubs);
 
-        } else {
+
+        } else if (Cache::get("weather-{$this->chat->chat_id}")) {
             try {
-                $this->client->request('GET', "https://api.openweathermap.org/data/2.5/weather", [
+                $city = $this->client->request('GET', "https://api.openweathermap.org/data/2.5/weather", [
                     'query' => [
                         'q' => $message->value(),
                         'appid' => $this->weatherApi,
@@ -178,6 +186,7 @@ class Handle extends WebhookHandler
                         'lang' => 'ru'
                     ]
                 ]);
+
                 Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
                     ->message("❓ Что тебя интересует: \n☀️ Погода на сегодня \n 📅 Прогноз на неделю \nНажми на кнопку ниже, чтобы выбрать! 👇")
                     ->keyboard(Keyboard::make()->row([
@@ -189,6 +198,11 @@ class Handle extends WebhookHandler
                 return;
             }
         }
+    }
+
+    private function createButton(string $action = '', string $from = '', string $to = '', int $width = 1, string $label = '🔙 back'): \DefStudio\Telegraph\Proxies\KeyboardButtonProxy
+    {
+        return Keyboard::make()->button($label)->action($action)->param('from', $from)->param('to', $to)->width($width);
     }
 
     /**
@@ -415,7 +429,7 @@ class Handle extends WebhookHandler
      * @throws \GuzzleHttp\Exception\GuzzleException
      * Get current data from agroprom
      */
-    private function getDataFromBank()
+    public function getDataFromBank(): array
     {
         $response = $this->client->get($this->bankUrl);
         $html = $response->getBody()->getContents();
@@ -438,5 +452,4 @@ class Handle extends WebhookHandler
         }
         return $result;
     }
-
 }
