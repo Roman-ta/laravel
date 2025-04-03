@@ -5,6 +5,8 @@ namespace App\Telegram;
 use App\Telegram\Currency;
 use DefStudio\Telegraph\Facades\Telegraph;
 use DefStudio\Telegraph\Handlers\WebhookHandler;
+use DefStudio\Telegraph\Keyboard\ReplyButton;
+use DefStudio\Telegraph\Keyboard\ReplyKeyboard;
 use DefStudio\Telegraph\Models\TelegraphChat;
 use DiDom\Document;
 use GuzzleHttp\Client;
@@ -22,7 +24,7 @@ class Handle extends WebhookHandler
     private string|null $botToken;
 
     private object|null $document;
-    private string $bankUrl = "https://www.agroprombank.com/";
+    private string $bankUrl;
 
     private array $state;
     private array $currencyArray = [
@@ -39,6 +41,7 @@ class Handle extends WebhookHandler
         $this->document = new Document();
         $this->weatherApi = env('WEATHER_API', '');
         $this->botToken = env('BOT_TOKEN', '');
+        $this->bankUrl = "https://www.agroprombank.com/";
     }
 
     /**
@@ -52,13 +55,21 @@ class Handle extends WebhookHandler
             Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
                 ->message("🌤 Привет! *{$nameUser}* Я твой личный бот. Готов помочь узнать погоду и рассчитать валюту в любой момент! что тебе нужно?")
                 ->keyboard(Keyboard::make()->row([
-                    Button::make('Погода')->action('test'),
+                    Button::make('Погода')->action('weather'),
                     Button::make('Курс валют')->action('currency'),
                 ]))->send();
             Log::info('Message sent successfully!');
         } catch (\Exception $e) {
             Log::error('Error while sending message: ' . $e->getMessage());
         }
+    }
+
+    public function weather(): void
+    {
+        Telegraph::bot($this->botToken)->chat($this->chat->chat_id)->message("Отлично, ты хочешь узнать погоду, пиши город")->send();
+        Cache::put("weather-{$this->chat->chat_id}", [
+            'controller' => 'weather'
+        ], now()->addMinutes(10));
     }
 
     /**
@@ -109,6 +120,7 @@ class Handle extends WebhookHandler
         }
     }
 
+
     /**
      * @return void
      */
@@ -131,35 +143,10 @@ class Handle extends WebhookHandler
     }
 
 
-    private function getDataFromBank()
-    {
-        $response = $this->client->get($this->bankUrl);
-        $html = $response->getBody()->getContents();
-        $this->document->loadHTML($html);
-        $currencyItems = $this->document->find('#rate-ib tbody tr td:nth-child(2)');
-        $currencyBuy = $this->document->find('.exchange-rates-item tbody tr td:nth-child(3)');
-        $currencySel = $this->document->find('.exchange-rates-item tbody tr td:nth-child(4)');
-        $result = [];
-        foreach ($currencyItems as $key => $item) {
-            $dataValue1 = $item->getAttribute('data-name1') ?: 'N/A';
-            $dataValue2 = $item->getAttribute('data-name2') ?: 'N/A';
-            $dataBuy = isset($currencyBuy[$key]) ? $currencyBuy[$key]->text() : 'N/A';
-            $dataSel = isset($currencySel[$key]) ? $currencySel[$key]->text() : 'N/A';
-            $result[] = [
-                0 => $dataValue1,
-                1 => $dataValue2,
-                'buy' => $dataBuy,
-                'sell' => $dataSel,
-            ];
-        }
-        return $result;
-    }
-
-
-// TODO В cache сохранил данные о выбранной валюте теперь нужно преобразовать, написать функцию и ее инициализировать
     protected function handleChatMessage(Stringable $message): void
     {
         $dataFromCurrency = Cache::get("exchange-{$this->chat->chat_id}");
+        $dataFromWeatherSubs = Cache::get("weather_subs-{$this->chat->chat_id}");
         if (!empty($dataFromCurrency)) {
             $result = $this->getDataFromBank();
             $response = '';
@@ -171,12 +158,15 @@ class Handle extends WebhookHandler
                     }
                     if ($item[1] == $dataFromCurrency['from']) {
                         $value = str_replace(',', '', $message->value());
-                        $this->reply($message->value() . " ".$value.' ' . $item['sell']);
-                        $response  = round($value / $item['sell'], 2) ;
+                        $this->reply($message->value() . " " . $value . ' ' . $item['sell']);
+                        $response = round($value / $item['sell'], 2);
                     }
                 }
             }
-            $this->reply($response);
+            $this->reply("{$message->value()} *{$dataFromCurrency['from']}* ровняется {$response} *{$dataFromCurrency['to']}*");
+
+        } else if (!empty($dataFromWeatherSubs)) {
+           Log::info($message->value(), $dataFromWeatherSubs);
 
         } else {
             try {
@@ -188,25 +178,15 @@ class Handle extends WebhookHandler
                         'lang' => 'ru'
                     ]
                 ]);
-            } catch (\Exception $e) {
-                $this->reply('Не могу определить город, попробуй еще раз!');
-                return;
-            }
-
-            try {
                 Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
-                    ->message(
-                        '❓ Что тебя интересует:
-☀️ Погода на сегодня
-📅 Прогноз на неделю
-Нажми на кнопку ниже, чтобы выбрать! 👇')
+                    ->message("❓ Что тебя интересует: \n☀️ Погода на сегодня \n 📅 Прогноз на неделю \nНажми на кнопку ниже, чтобы выбрать! 👇")
                     ->keyboard(Keyboard::make()->row([
                         Button::make('На сегодня')->action('today')->param('city', $message->value())->param('api', 'weather'),
                         Button::make('На 5 дней')->action('week')->param('city', $message->value())->param('api', 'forecast')
                     ]))->send();
-                Log::info('Message sent successfully!');
             } catch (\Exception $e) {
-                Log::error('Error while sending message: ' . $e->getMessage());
+                $this->reply("Не могу распознать город, попробуй еще раз");
+                return;
             }
         }
     }
@@ -349,6 +329,65 @@ class Handle extends WebhookHandler
     /**
      * @return void
      */
+    public function weather_subs(): void
+    {
+        $customer = $this->message->from();
+        $keyBoard = ReplyKeyboard::make();
+
+        Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
+            ->message('Я могу отправлять сообщение с данными о погоде в удобное для тебя время, выбери')
+            ->replyKeyboard($keyBoard
+                ->row([
+                    ReplyButton::make('7:00'),
+                    ReplyButton::make('7:30'),
+                    ReplyButton::make('8:00'),
+                    ReplyButton::make('8:30'),
+                ])->row([
+                    ReplyButton::make('9:00'),
+                    ReplyButton::make('9:30'),
+                    ReplyButton::make('10:00'),
+                    ReplyButton::make('10:30'),
+                ])
+                ->row([
+                    ReplyButton::make('11:00'),
+                    ReplyButton::make('11:30'),
+                    ReplyButton::make('12:00'),
+                    ReplyButton::make('12:30'),
+                ])->row([
+                    ReplyButton::make('13:00'),
+                    ReplyButton::make('13:30'),
+                    ReplyButton::make('14:00'),
+                    ReplyButton::make('14:30'),
+                ])
+                ->row([
+                    ReplyButton::make('15:00'),
+                    ReplyButton::make('15:30'),
+                    ReplyButton::make('16:00'),
+                    ReplyButton::make('16:30'),
+                ])->row([
+                    ReplyButton::make('17:00'),
+                    ReplyButton::make('17:30'),
+                    ReplyButton::make('18:00'),
+                    ReplyButton::make('18:30'),
+                ])
+                ->row([
+                    ReplyButton::make('19:00'),
+                    ReplyButton::make('19:30'),
+                    ReplyButton::make('20:00'),
+                    ReplyButton::make('20:30'),
+                ])
+            )
+            ->send();
+        Cache::put('weather_subs-' . $this->chat->chat_id, [
+            'idCustomer' => $customer->id(),
+            'name' => $customer->username(),
+        ], now()->addHours(1));
+    }
+
+
+    /**
+     * @return void
+     */
     public function help(): void
     {
         $helpText = "Привет! Я твой личный погодный бот. Вот что я могу делать:\n\n";
@@ -365,11 +404,39 @@ class Handle extends WebhookHandler
 
     public function handleUnknownCommand(Stringable $text): void
     {
-        if ($text->value() == '/start') {
-            $this->reply('Privet pidar');
-        } else {
+        if ($text->value() !== '/start' || $text->value() !== '/help') {
             $this->reply('Неизвестная команда');
         }
+    }
+
+    /**
+     * @return array
+     * @throws \DiDom\Exceptions\InvalidSelectorException
+     * @throws \GuzzleHttp\Exception\GuzzleException
+     * Get current data from agroprom
+     */
+    private function getDataFromBank()
+    {
+        $response = $this->client->get($this->bankUrl);
+        $html = $response->getBody()->getContents();
+        $this->document->loadHTML($html);
+        $currencyItems = $this->document->find('#rate-ib tbody tr td:nth-child(2)');
+        $currencyBuy = $this->document->find('.exchange-rates-item tbody tr td:nth-child(3)');
+        $currencySel = $this->document->find('.exchange-rates-item tbody tr td:nth-child(4)');
+        $result = [];
+        foreach ($currencyItems as $key => $item) {
+            $dataValue1 = $item->getAttribute('data-name1') ?: 'N/A';
+            $dataValue2 = $item->getAttribute('data-name2') ?: 'N/A';
+            $dataBuy = isset($currencyBuy[$key]) ? $currencyBuy[$key]->text() : 'N/A';
+            $dataSel = isset($currencySel[$key]) ? $currencySel[$key]->text() : 'N/A';
+            $result[] = [
+                0 => $dataValue1,
+                1 => $dataValue2,
+                'buy' => $dataBuy,
+                'sell' => $dataSel,
+            ];
+        }
+        return $result;
     }
 
 }
