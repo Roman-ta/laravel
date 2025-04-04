@@ -26,6 +26,7 @@ class Handle extends WebhookHandler
     private object|null $document;
 
     private Weather $weather;
+    private Currency $currency;
 
     private $currencyArray;
 
@@ -38,6 +39,7 @@ class Handle extends WebhookHandler
         $this->bankUrl = "https://www.agroprombank.com/";
         $this->document = new Document();
         $this->weather = new Weather();
+        $this->currency = new Currency();
     }
 
     /**
@@ -51,11 +53,32 @@ class Handle extends WebhookHandler
                 ->message("🌤 Привет! *{$nameUser}* Я твой личный бот. Готов помочь узнать погоду и рассчитать валюту в любой момент! что тебе нужно?")
                 ->keyboard(Keyboard::make()->row([
                     Button::make('Погода')->action('weather'),
-                    Button::make('Курс валют')->action('currency'),
+                    Button::make('Курс валют')->action('currency')->param('step', 1),
                 ]))->send();
             Log::info('Message sent successfully!');
         } catch (\Exception $e) {
             Log::error('Error while sending message: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * @return void
+     */
+    public function currency(): void
+    {
+        $step = $this->data->get('step');
+        $from = $this->data->get('from') ?? '';
+        $to = $this->data->get('to') ?? '';
+        switch ($step) {
+            case 1:
+                $this->currency->getCurrency($this->chat, $this->callbackQuery);
+                break;
+            case 2:
+                $this->currency->exchange($this->chat, $this->callbackQuery, $from);
+                break;
+            case 3:
+                $this->currency->exchangeTo($this->chat, $this->callbackQuery, $from, $to);
+                break;
         }
     }
 
@@ -71,7 +94,7 @@ class Handle extends WebhookHandler
      * @return void
      * @throws \GuzzleHttp\Exception\GuzzleException
      */
-    public function today():void
+    public function today(): void
     {
         $data = $this->getDataFromButtons();
         $this->weather->today($data, $this->chat);
@@ -81,7 +104,7 @@ class Handle extends WebhookHandler
      * @return void
      * @throws \GuzzleHttp\Exception\GuzzleException
      */
-    public function week():void
+    public function week(): void
     {
         $data = $this->getDataFromButtons();
         $this->weather->week($data, $this->chat);
@@ -90,78 +113,12 @@ class Handle extends WebhookHandler
     /**
      * @return array
      */
-    private function getDataFromButtons() : array
+    private function getDataFromButtons(): array
     {
         return [
             'city' => $this->data->get('city'),
             'api' => $this->data->get('api')
         ];
-    }
-    /**
-     * @return void
-     */
-    public function currency(): void
-    {
-        $customerName = $this->callbackQuery->from()->firstName();
-        try {
-            $keyboard = Keyboard::make();
-            foreach ($this->currencyArray as $key => $currency) {
-                $keyboard->button($currency['text'])->action('exchange')->param('from', $currency['currency'])->param('name', $customerName)->width(1 / count($this->currencyArray));
-            }
-            $keyboard->button('🔙 back')->action('start')->width(1);
-            Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
-                ->message("Отлично, выбери *из какой валюты* тебе нужно перевести")
-                ->keyboard($keyboard)->send();
-        } catch (\Exception $e) {
-            Log::error('Error while sending message: ' . $e->getMessage());
-        }
-    }
-
-    /**
-     * @return void
-     */
-    public function exchange()
-    {
-        $customerName = $this->callbackQuery->from()->firstName();
-        $from = $this->data->get('from');
-
-        try {
-            $keyboard = Keyboard::make();
-            foreach ($this->currencyArray as $key => $label) {
-                if ($label['currency'] == $from) {
-                    continue;
-                }
-                $keyboard->button($label['text'])->action('exchangeTo')->param('to', $label['currency'])->param('from', $from)->width(1 / count($this->currencyArray));
-            }
-            $keyboard->button('🔙 back')->action('currency')->param('name', $customerName)->width(1);
-            Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
-                ->message("Теперь выбери, *в какую валюту* хочешь перевести")
-                ->keyboard($keyboard)
-                ->send();
-        } catch (\Exception $e) {
-            Log::error('Error while sending message: ' . $e->getMessage());
-        }
-    }
-
-
-    /**
-     * @return void
-     */
-    public function exchangeTo()
-    {
-        $chatId = $this->chat->chat_id;
-        $from = $this->data->get('from');
-        $to = $this->data->get('to');
-        $keyboard = Keyboard::make()->button('🔙 back')->action('exchange')->param('from', $from)->param('to', $to)->width(1);
-        Telegraph::bot($this->botToken)->chat($chatId)
-            ->message("Отлично, ты хочешь перевести из *{$from}* в *{$to}*. Введи сумму.")
-            ->keyboard($keyboard)
-            ->send();
-        Cache::put("exchange-{$chatId}", [
-            'from' => $from,
-            'to' => $to,
-            'controller' => 'currency'
-        ], now()->addMinutes(10));
     }
 
 
@@ -176,7 +133,7 @@ class Handle extends WebhookHandler
                 $this->reply('Необходимо ввести число');
                 return;
             }
-            $result = $this->getDataFromBank();
+            $result = $this->currency->getDataFromBank();
             $response = '';
             foreach ($result as $key => $item) {
                 if (in_array($dataFromCurrency['from'], $item) && in_array($dataFromCurrency['to'], $item)) {
@@ -189,12 +146,10 @@ class Handle extends WebhookHandler
                     }
                 }
             }
-
             $this->reply("{$message->value()} *{$dataFromCurrency['from']}* ровняется {$response} *{$dataFromCurrency['to']}*");
-
         } else if (!empty($dataFromWeather)) {
             try {
-               $this->weather->getDefaultWeatherResult($message->value());
+                $this->weather->getDefaultWeatherResult($message->value());
 
                 Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
                     ->message("❓ Что тебя интересует: \n☀️ Погода на сегодня \n 📅 Прогноз на неделю \nНажми на кнопку ниже, чтобы выбрать! 👇")
@@ -208,13 +163,6 @@ class Handle extends WebhookHandler
             }
         }
     }
-
-    private function createButton(string $action = '', string $from = '', string $to = '', int $width = 1, string $label = '🔙 back'): \DefStudio\Telegraph\Proxies\KeyboardButtonProxy
-    {
-        return Keyboard::make()->button($label)->action($action)->param('from', $from)->param('to', $to)->width($width);
-    }
-
-
 
     /**
      * @return void
@@ -274,10 +222,6 @@ class Handle extends WebhookHandler
         ], now()->addHours(1));
     }
 
-
-    /**
-     * @return void
-     */
     public function help(): void
     {
         $helpText = "Привет! Я твой личный погодный бот. Вот что я могу делать:\n\n";
@@ -295,37 +239,8 @@ class Handle extends WebhookHandler
     public function handleUnknownCommand(Stringable $text): void
     {
         if ($text->value() !== '/start' || $text->value() !== '/help') {
-            $this->reply('Неизвестная команда');
+            $this->reply( 'Неизвестная команда');
         }
     }
 
-    /**
-     * @return array
-     * @throws \DiDom\Exceptions\InvalidSelectorException
-     * @throws \GuzzleHttp\Exception\GuzzleException
-     * Get current data from agroprom
-     */
-    public function getDataFromBank(): array
-    {
-        $response = $this->client->get($this->bankUrl);
-        $html = $response->getBody()->getContents();
-        $this->document->loadHTML($html);
-        $currencyItems = $this->document->find('#rate-ib tbody tr td:nth-child(2)');
-        $currencyBuy = $this->document->find('.exchange-rates-item tbody tr td:nth-child(3)');
-        $currencySel = $this->document->find('.exchange-rates-item tbody tr td:nth-child(4)');
-        $result = [];
-        foreach ($currencyItems as $key => $item) {
-            $dataValue1 = $item->getAttribute('data-name1') ?: 'N/A';
-            $dataValue2 = $item->getAttribute('data-name2') ?: 'N/A';
-            $dataBuy = isset($currencyBuy[$key]) ? $currencyBuy[$key]->text() : 'N/A';
-            $dataSel = isset($currencySel[$key]) ? $currencySel[$key]->text() : 'N/A';
-            $result[] = [
-                0 => $dataValue1,
-                1 => $dataValue2,
-                'buy' => $dataBuy,
-                'sell' => $dataSel,
-            ];
-        }
-        return $result;
-    }
 }
