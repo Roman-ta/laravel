@@ -37,7 +37,7 @@ class Weather extends WebhookHandler
      * @param TelegraphChat $chat
      * @return void
      */
-    public function startWeather(TelegraphChat $chat)
+    public function startWeather(TelegraphChat $chat) : void
     {
 
         Telegraph::bot($this->botToken)->chat($chat->chat_id)->message("Отлично, ты хочешь узнать погоду, пиши город")->send();
@@ -229,15 +229,21 @@ class Weather extends WebhookHandler
      * @return array|null
      * @throws \GuzzleHttp\Exception\GuzzleException
      */
-    public function getDefaultWeatherResult(string $message) : array|null
+    public function getDefaultWeatherResult(string $message) :? array
     {
-       return $this->client->request('GET', "https://api.openweathermap.org/data/2.5/weather", [
-            'query' => [
-                'q' => $message,
-                'appid' => $this->weatherApi,
-                'units' => 'metric',
-                'lang' => 'ru'
-            ]
-        ]);
+        try {
+            $weather =  $this->client->request('GET', "https://api.openweathermap.org/data/2.5/weather", [
+                'query' => [
+                    'q' => $message,
+                    'appid' => $this->weatherApi,
+                    'units' => 'metric',
+                    'lang' => 'ru'
+                ]
+            ]);
+            return json_decode($weather->getBody(), true);
+        } catch (\Exception $e) {
+            Log::error('Ошибка в обработке погоды: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            return null;
+        }
     }
 }
