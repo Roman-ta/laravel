@@ -28,21 +28,21 @@ class Currency extends WebhookHandler
         $this->document = new Document();
     }
 
-    public function getCurrency(TelegraphChat $chat, $callBack): void
+    public function getCurrency(TelegraphChat $chat): void
     {
-
-        $customerName = $callBack->from()->firstName();
+        $chatInfo = $chat->info();
+        $customerName = $chatInfo['first_name'];
         $currencyArray = DB::table('currency_list')->get();
         $currencyArray = json_decode(json_encode($currencyArray), true);
         try {
             $keyboard = Keyboard::make();
             foreach ($currencyArray as $key => $currency) {
-                $keyboard->button($currency['text'])->action('currency')->param('step', 2)
+                $keyboard->button($currency['flag'] . $currency['text'])->action('currency')->param('step', 2)
                     ->param('from', $currency['currency'])->param('name', $customerName)->width(1 / count($currencyArray));
             }
             $keyboard->button('🔙 back')->action('start')->width(1);
             Telegraph::bot($this->botToken)->chat($chat->chat_id)
-                ->message("Отлично, выбери *из какой валюты* тебе нужно перевести")
+                ->message("👋 Привет, *{$customerName}*!\n\nДавай начнём обмен валют. Сначала выбери, *из какой валюты* ты хочешь перевести 💱")
                 ->keyboard($keyboard)->send();
         } catch (\Exception $e) {
             Log::error('Error while sending message: ' . $e->getMessage());
@@ -64,12 +64,12 @@ class Currency extends WebhookHandler
                 if ($label['currency'] == $from) {
                     continue;
                 }
-                $keyboard->button($label['text'])->action('currency')
+                $keyboard->button($label['flag'] . $label['text'])->action('currency')
                     ->param('step', 3)->param('to', $label['currency'])->param('from', $from)->width(1 / count($currencyArray));
             }
             $keyboard->button('🔙 back')->action('currency')->param('step', 1)->param('name', $customerName)->width(1);
             Telegraph::bot($this->botToken)->chat($chat->chat_id)
-                ->message("Теперь выбери, *в какую валюту* хочешь перевести")
+                ->message("👍 Отлично, ты выбрал *{$from}*.\n\nТеперь выбери, *в какую валюту* ты хочешь перевести 💹")
                 ->keyboard($keyboard)
                 ->send();
         } catch (\Exception $e) {
@@ -90,7 +90,7 @@ class Currency extends WebhookHandler
         $chatId = $chat->chat_id;
         $keyboard = Keyboard::make()->button('🔙 back')->action('currency')->param('step', 2)->param('from', $from)->param('to', $to)->width(1);
         Telegraph::bot($this->botToken)->chat($chatId)
-            ->message("Отлично, ты хочешь перевести из *{$from}* в *{$to}*. Введи сумму.")
+            ->message("📥 Перевод из *{$from}* в *{$to}*\n\n💰 Введи сумму, которую хочешь обменять.")
             ->keyboard($keyboard)
             ->send();
         Cache::put("exchange-{$chatId}", [
