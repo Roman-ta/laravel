@@ -23,35 +23,17 @@ Artisan::command('createCommands', function () {
 
 Artisan::command('insert_currency', function () {
     \App\Models\CurrencyModel::insert([
-        ['currency' => 'USD', 'text' => '🇺🇸 USD'],
-        ['currency' => 'EUR', 'text' => '🇪🇺 EUR'],
-        ['currency' => 'MDL', 'text' => '🇲🇩 MDL'],
-        ['currency' => 'RUB', 'text' => '🇷🇺 RUB'],
-        ['currency' => 'RUP', 'text' => '⚒ RUP'],
+        ['currency' => 'USD', 'text' => '🇺🇸 USD', 'flag'=>'🇺🇸'],
+        ['currency' => 'EUR', 'text' => '🇪🇺 EUR', 'flag'=>'🇪🇺'],
+        ['currency' => 'MDL', 'text' => '🇲🇩 MDL', 'flag'=>'🇲🇩'],
+        ['currency' => 'RUB', 'text' => '🇷🇺 RUB', 'flag'=>'🇷🇺'],
+        ['currency' => 'RUP', 'text' => '⚒ RUP', 'flag'=>'🏦'],
     ]);
 });
 
-Artisan::command('update_currency_list', function () {
-    $data = [['currency' => 'USD', 'text' => '🇺🇸 USD'],
-        ['currency' => 'EUR', 'text' => '🇪🇺 EUR'],
-        ['currency' => 'MDL', 'text' => '🇲🇩 MDL'],
-        ['currency' => 'RUB', 'text' => '🇷🇺 RUB'],
-        ['currency' => 'RUP', 'text' => '⚒ RUP']];
-    $flags = ['USD' => '🇺🇸',
-        'EUR' => '🇪🇺',
-        'MDL' => '🇲🇩',
-        'UAH' => '🇺🇦',
-        'RUB' => '🇷🇺',
-        'RUP' => '🏦'];
-    foreach ($data as $item) {
-        \App\Models\CurrencyModel::where('currency', $item['currency'])->update([
-            'text' => $item['currency'],
-            'flag' => $flags[$item['currency']]
-        ]);
-    }
-});
 
 Schedule::call(function () {
     (new \App\Telegram\WeatherSubs())->getSubscriptionWeather();
+    (new \App\Telegram\CurrencySubs())->getSubscriptionCurrency();
 })->everyMinute();
 

@@ -5,17 +5,16 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Model for weather_subscription
+ * model for currency_subscription
  */
-class WeatherSubscriptionModel extends Model
+class CurrencySubscriptionModel extends Model
 {
-
-    protected $table = 'weather_subscriptions';
     protected $fillable = [
-        'chatId',
+        'chat_id',
         'name',
-        'city',
         'hour',
         'minute',
     ];
+    protected $table = 'currency_subscription';
+
 }

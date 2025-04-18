@@ -8,7 +8,6 @@ use DefStudio\Telegraph\Handlers\WebhookHandler;
 use DefStudio\Telegraph\Keyboard\Button;
 use DefStudio\Telegraph\Keyboard\Keyboard;
 use DefStudio\Telegraph\Models\TelegraphChat;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Weather subs подписка на погоду

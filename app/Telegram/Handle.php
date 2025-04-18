@@ -2,9 +2,11 @@
 
 namespace App\Telegram;
 
+use App\Models\CurrencySubscriptionModel;
 use App\Models\WeatherSubscriptionModel;
 use DefStudio\Telegraph\Facades\Telegraph;
 use DefStudio\Telegraph\Handlers\WebhookHandler;
+use DefStudio\Telegraph\Models\TelegraphChat;
 use GuzzleHttp\Client;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Stringable;
@@ -23,6 +25,7 @@ class Handle extends WebhookHandler
     private Weather $weather;
     private Currency $currency;
     private WeatherSubs $weatherSubs;
+    private CurrencySubs $currencySubs;
     private Client $client;
 
     public function __construct()
@@ -32,6 +35,7 @@ class Handle extends WebhookHandler
         $this->currency = new Currency();
         $this->weatherSubs = new WeatherSubs();
         $this->client = new Client();
+        $this->currencySubs = new CurrencySubs();
     }
 
     /**
@@ -74,35 +78,32 @@ class Handle extends WebhookHandler
         }
     }
 
+    /**
+     * @return void
+     * @throws \DiDom\Exceptions\InvalidSelectorException
+     * @throws \GuzzleHttp\Exception\GuzzleException
+     */
     public function currency_subs(): void
     {
-        $bankData = $this->currency->getDataFromBank();
-
-        $message = "💱 *Текущий курс валют:*\n\n";
-        $message .= "💰 *Валюта* | 💵 *Покупка* | 💳 *Продажа*\n";
-        $message .= "---------------------------------\n";
-
-        $flags = \App\Models\CurrencyModel::all()->pluck('flag', 'currency');
-
-        foreach ($bankData as $item) {
-            if (!in_array('RUP', $item)) continue;
-
-            $fromCurrency = $item[0];
-            $toCurrency = $item[1];
-
-            $flagFrom = $flags[$fromCurrency] ?? '';
-            $flagTo = $flags[$toCurrency] ?? '';
-
-            $message .= "*{$flagFrom} {$fromCurrency} → {$flagTo} {$toCurrency}*\n\n";
-            $message .= "🟢 *{$item['buy']}* | 🔴 *{$item['sell']}*\n";
-            $message .= "---------------------------------\n";
+        $step = $this->data->get('step') ?? 1;
+        $hour = $this->data->get('hour') ?? 0;
+        $minute = $this->data->get('minute') ?? 0;
+        switch ($step) {
+            case 1:
+                $this->currencySubs->start($this->chat);
+                break;
+            case 2:
+                $this->currencySubs->currencySubscriptionGetHours($this->chat, $hour);
+                break;
+            case 3:
+                $this->currencySubs->currencySubscriptionGetMinutes($this->chat, $hour, $minute);
+                break;
+            case 4:
+                $this->currencySubs->finish($this->chat, $hour, $minute);
+                break;
         }
 
-        Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
-            ->message($message)
-            ->send();
     }
-
 
 
     public function ai()
@@ -261,7 +262,6 @@ class Handle extends WebhookHandler
         $hour = $this->data->get('hour') ?? 0;
         $minute = $this->data->get('minute') ?? 0;
         $city = $this->data->get('city') ?? '';
-        Log::info('Раскодированный город:', ['city' => $city]);
         switch ((string)$step) {
             case '1':
                 $this->weatherSubs->start($this->chat, $city);
