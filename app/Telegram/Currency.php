@@ -102,31 +102,34 @@ class Currency extends WebhookHandler
 
     /**
      * @return array
-     * @throws \DiDom\Exceptions\InvalidSelectorException
-     * @throws \GuzzleHttp\Exception\GuzzleException
-     * Get current data from agroprom
      */
     public function getDataFromBank(): array
     {
-        $response = $this->client->get($this->bankUrl);
-        $html = $response->getBody()->getContents();
-        $this->document->loadHTML($html);
-        $currencyItems = $this->document->find('#rate-ib tbody tr td:nth-child(2)');
-        $currencyBuy = $this->document->find('.exchange-rates-item tbody tr td:nth-child(3)');
-        $currencySel = $this->document->find('.exchange-rates-item tbody tr td:nth-child(4)');
-        $result = [];
-        foreach ($currencyItems as $key => $item) {
-            $dataValue1 = $item->getAttribute('data-name1') ?: 'N/A';
-            $dataValue2 = $item->getAttribute('data-name2') ?: 'N/A';
-            $dataBuy = isset($currencyBuy[$key]) ? $currencyBuy[$key]->text() : 'N/A';
-            $dataSel = isset($currencySel[$key]) ? $currencySel[$key]->text() : 'N/A';
-            $result[] = [
-                0 => $dataValue1,
-                1 => $dataValue2,
-                'buy' => $dataBuy,
-                'sell' => $dataSel,
-            ];
+        try {
+            $response = $this->client->get($this->bankUrl);
+            $html = $response->getBody()->getContents();
+            $this->document->loadHTML($html);
+            $currencyItems = $this->document->find('#rate-ib tbody tr td:nth-child(2)');
+            $currencyBuy = $this->document->find('.exchange-rates-item tbody tr td:nth-child(3)');
+            $currencySel = $this->document->find('.exchange-rates-item tbody tr td:nth-child(4)');
+            $result = [];
+            foreach ($currencyItems as $key => $item) {
+                $dataValue1 = $item->getAttribute('data-name1') ?: 'N/A';
+                $dataValue2 = $item->getAttribute('data-name2') ?: 'N/A';
+                $dataBuy = isset($currencyBuy[$key]) ? $currencyBuy[$key]->text() : 'N/A';
+                $dataSel = isset($currencySel[$key]) ? $currencySel[$key]->text() : 'N/A';
+                $result[] = [
+                    0 => $dataValue1,
+                    1 => $dataValue2,
+                    'buy' => $dataBuy,
+                    'sell' => $dataSel,
+                ];
+            }
+            return $result;
+        } catch (\Exception $e) {
+            Log::error('Error while sending message: ' . $e->getMessage());
+            return [];
         }
-        return $result;
+
     }
 }
