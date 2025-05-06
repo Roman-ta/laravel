@@ -14,8 +14,8 @@ return new class extends Migration {
             $table->id();
             $table->string('chat_id');
             $table->string('name');
-            $table->integer('hour');
-            $table->integer('minute');
+            $table->string('hour');
+            $table->string('minute');
             $table->timestamps();
         });
     }

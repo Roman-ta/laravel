@@ -11,6 +11,7 @@ use DefStudio\Telegraph\Keyboard\Button;
 use DefStudio\Telegraph\Keyboard\Keyboard;
 use DefStudio\Telegraph\Models\TelegraphChat;
 use Illuminate\Support\Facades\Log;
+use Mockery\Exception;
 
 /**
  * controller subscription for currency
@@ -52,45 +53,65 @@ class CurrencySubs extends WebhookHandler
         }
     }
 
+    /**
+     * @param TelegraphChat $chat
+     * @param $hour
+     * @return void
+     */
     public function currencySubscriptionGetHours(TelegraphChat $chat, $hour)
     {
-        $keyboard = Keyboard::make();
-        $row = [];
-        for ($i = 0; $i < 60; $i += 5) {
-            $minute = (string)$i;
-            if (strlen($minute) < 2) {
-                $minute = '0' . $minute;
+        try {
+            $keyboard = Keyboard::make();
+            $row = [];
+            for ($i = 0; $i < 60; $i += 5) {
+                $minute = (string)$i;
+                if (strlen($minute) < 2) {
+                    $minute = '0' . $minute;
+                }
+                $row[] = Button::make($minute)->action('currency_subs')->param('hour', $hour)->param('minute', $minute)->param('step', 3);
             }
-            $row[] = Button::make($minute)->action('currency_subs')->param('hour', $hour)->param('minute', $minute)->param('step', 3);
+            $chunks = array_chunk($row, 6);
+            foreach ($chunks as $chunk) {
+                $keyboard->row($chunk);
+            }
+            if (strlen($hour) < 2) {
+                $hour = '0' . $hour;
+            }
+            $keyboard->button('🔙 back')->action('currency_subs')->param('step', 1)->width(1);
+            Telegraph::chat($chat->chat_id)
+                ->message('Отлично, теперь выбери минуты')
+                ->keyboard($keyboard)
+                ->send();
+        } catch (\Exception $e) {
+            Log::error($e->getMessage());
         }
-        $chunks = array_chunk($row, 6);
-        foreach ($chunks as $chunk) {
-            $keyboard->row($chunk);
-        }
-        if (strlen($hour) < 2) {
-            $hour = '0' . $hour;
-        }
-        $keyboard->button('🔙 back')->action('currency_subs')->param('step', 1)->width(1);
-        Telegraph::chat($chat->chat_id)
-            ->message('Отлично, теперь выбери минуты')
-            ->keyboard($keyboard)
-            ->send();
+
 
     }
 
-    public function currencySubscriptionGetMinutes(TelegraphChat $chat, $hour, $minute)
+    /**
+     * @param TelegraphChat $chat
+     * @param $hour
+     * @param $minute
+     * @return void
+     * @throws \DefStudio\Telegraph\Exceptions\TelegraphException
+     */
+    public function currencySubscriptionGetMinutes(TelegraphChat $chat, $hour, $minute) : void
     {
-        $chatInfo = $this->getChatInfo($chat);
-        $keyboard = Keyboard::make();
-        $keyboard->button('🔙 back')->action('currency_subs')->param('step', 2)->param('hour', $hour)->width(0.5);
-        $keyboard->button('Yes')->action('currency_subs')->param('step', 4)->width(0.5)->param('hour', $hour)->param('minute', $minute);
-        if (strlen($minute) < 2) {
-            $minute = '0' . $minute;
+        try {
+            $keyboard = Keyboard::make();
+            $keyboard->button('🔙 back')->action('currency_subs')->param('step', 2)->param('hour', $hour)->width(0.5);
+            $keyboard->button('Yes')->action('currency_subs')->param('step', 4)->width(0.5)->param('hour', $hour)->param('minute', $minute);
+            if (strlen($minute) < 2) {
+                $minute = '0' . $minute;
+            }
+            Telegraph::chat($chat->chat_id)
+                ->message("Отлично ты выбрал *{$hour}:{$minute}* все верно?")
+                ->keyboard($keyboard)
+                ->send();
+        } catch ( \Exception $e) {
+            Log::error($e->getMessage());
         }
-        Telegraph::chat($chat->chat_id)
-            ->message("Отлично {$chatInfo['first_name']}, ты выбрал *{$hour}:{$minute}* все верно?")
-            ->keyboard($keyboard)
-            ->send();
     }
 
 
@@ -103,6 +124,8 @@ class CurrencySubs extends WebhookHandler
     public function finish(TelegraphChat $chat, $hour, $minute): void
     {
         try {
+            $minute = str_pad($minute, 2, '0', STR_PAD_LEFT);
+            $hour = str_pad($hour, 2, '0', STR_PAD_LEFT);
             $chatInfo = $this->getChatInfo($chat);
             $customerSubscriptionExists = CurrencySubscriptionModel::where('chat_id', $chat->chat_id)->exists();
 
