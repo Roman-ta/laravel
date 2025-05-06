@@ -37,16 +37,16 @@ class Weather extends WebhookHandler
     public function startWeather(TelegraphChat $chat): void
     {
 
-        Telegraph::bot($this->botToken)->chat($chat->chat_id)->message("Отлично, ты хочешь узнать погоду, пиши город")->send();
+        Telegraph::chat($chat->chat_id)->message("Отлично, ты хочешь узнать погоду, пиши город")->send();
         Cache::put("weather-{$chat->chat_id}", [
             'controller' => 'weather'
         ], now()->addMinutes(10));
     }
 
     /**
+     * @param TelegraphChat $chat
      * @param string $city
      * @param string $api
-     * @param TelegraphChat $chat
      * @return void
      * @throws \GuzzleHttp\Exception\GuzzleException
      */
@@ -65,13 +65,13 @@ class Weather extends WebhookHandler
     }
 
     /**
+     * @param TelegraphChat $chat
      * @param string $city
      * @param string $api
-     * @param TelegraphChat $chat
      * @return void
      * @throws \GuzzleHttp\Exception\GuzzleException
      */
-    public function week(TelegraphChat $chat, string $city = '', string $api = 'weather'): void
+    public function week(TelegraphChat $chat, string $city, string $api = 'weather'): void
     {
         try {
             $result = $this->getWeatherApiResult($city, $api);
@@ -90,16 +90,12 @@ class Weather extends WebhookHandler
      * @param $res
      * @return string[]
      */
-    private function getWeatherForWeek($res)
+    private function getWeatherForWeek($res): array
     {
-        if (empty($res)) {
-            log::debug('Что то с api');
-        }
         $forecastData = $res['list'] ?? [];
         $cityName = $res['city']['name'] ?? 'Неизвестно';
-
         $responseMessage = "📅 *Прогноз погоды для {$cityName}*\n\n";
-
+        $icons = "https://openweathermap.org/img/wn/01d.png";
         foreach ($forecastData as $key => $item) {
             if ($key % 8 === 0) {
                 $date = date('d.m', $item['dt']);
@@ -162,7 +158,7 @@ class Weather extends WebhookHandler
             $responseMessage = "🌡 Температура в городе *{$res['name']}*:  *{$temperature}°C* ({$res['weather'][0]['description']})\n";
             $responseMessage .= "😌 Ощущается как: *{$temperatureFeels}°C*\n";
             $responseMessage .= "💨 Скорость ветра: *{$windSpeed} м/с*";
-            return $result = [
+            return  [
                 'message' => $responseMessage,
                 'photo' => $icons,
             ];

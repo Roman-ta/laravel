@@ -9,8 +9,5 @@ class Cache extends Model
 {
     use HasFactory;
 
-    public function getTable()
-    {
-        return 'cache';
-    }
+    protected $table = 'cache';
 }
