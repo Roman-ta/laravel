@@ -148,6 +148,21 @@ class Currency extends WebhookHandler
                     'created_at' => now(),
                 ];
             }
+            $missedCurrency = [
+                0 => [
+                    'from' => "EUR",
+                    'to' => "MDL",
+                    'buy' => "18.48",
+                    'sell' => "20.86",
+                ],
+                1 => [
+                    'from' => "RUB",
+                    'to' => "MDL",
+                    'buy' => "0.186",
+                    'sell' => "0.216",
+                ]
+            ];
+            $records = array_merge($records, $missedCurrency);
 
             AgroBankModel::upsert(
                 $records,
