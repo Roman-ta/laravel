@@ -110,17 +110,17 @@ class WeatherSubs extends WebhookHandler
             ->message("Теперь каждый день в *{$hour}:{$minute}* ты будешь получать уведомление о погоде в городе *{$city}*")
             ->send();
 
-        $customerSubscriptionExists = WeatherSubscriptionModel::where('chatId', $chat->chat_id)->exists();
+        $customerSubscriptionExists = WeatherSubscriptionModel::where('chat_id', $chat->chat_id)->exists();
         if (!$customerSubscriptionExists) {
             WeatherSubscriptionModel::create([
-                'chatId' => $chat->chat_id,
+                'chat_id' => $chat->chat_id,
                 'name' => $chatInfo['first_name'],
                 'city' => $city,
                 'hour' => $hour,
                 'minute' => $minute,
             ]);
         } else {
-            WeatherSubscriptionModel::where('chatId', $chat->chat_id)->update([
+            WeatherSubscriptionModel::where('chat_id', $chat->chat_id)->update([
                 'city' => $city,
                 'hour' => $hour,
                 'minute' => $minute,
@@ -140,10 +140,10 @@ class WeatherSubs extends WebhookHandler
         foreach ($customerSubscriptions as $customerSubscription) {
             $time = $customerSubscription['hour'] . ':' . $customerSubscription['minute'];
             if ($time == $currentTime) {
-                Telegraph::chat($customerSubscription['chatId'])
+                Telegraph::chat($customerSubscription['chat_id'])
                     ->message("Привет *{$customerSubscription['name']}* спасибо за подписку на погоду, вот она")
                     ->send();
-                $chat = TelegraphChat::where('chat_id', $customerSubscription['chatId'])->first();
+                $chat = TelegraphChat::where('chat_id', $customerSubscription['chat_id'])->first();
                 (new Weather())->today($chat, $customerSubscription['city']);
             }
         }

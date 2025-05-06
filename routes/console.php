@@ -23,11 +23,11 @@ Artisan::command('createCommands', function () {
 
 Artisan::command('insert_currency', function () {
     \App\Models\CurrencyModel::insert([
-        ['currency' => 'USD', 'text' => '🇺🇸 USD', 'flag'=>'🇺🇸'],
-        ['currency' => 'EUR', 'text' => '🇪🇺 EUR', 'flag'=>'🇪🇺'],
-        ['currency' => 'MDL', 'text' => '🇲🇩 MDL', 'flag'=>'🇲🇩'],
-        ['currency' => 'RUB', 'text' => '🇷🇺 RUB', 'flag'=>'🇷🇺'],
-        ['currency' => 'RUP', 'text' => '⚒ RUP', 'flag'=>'🏦'],
+        ['currency' => 'USD', 'text' => '🇺🇸 USD', 'flag' => '🇺🇸'],
+        ['currency' => 'EUR', 'text' => '🇪🇺 EUR', 'flag' => '🇪🇺'],
+        ['currency' => 'MDL', 'text' => '🇲🇩 MDL', 'flag' => '🇲🇩'],
+        ['currency' => 'RUB', 'text' => '🇷🇺 RUB', 'flag' => '🇷🇺'],
+        ['currency' => 'RUP', 'text' => '⚒ RUP', 'flag' => '🏦'],
     ]);
 });
 
@@ -36,4 +36,6 @@ Schedule::call(function () {
     (new \App\Telegram\WeatherSubs())->getSubscriptionWeather();
     (new \App\Telegram\CurrencySubs())->getSubscriptionCurrency();
 })->everyMinute();
-
+Schedule::call(function () {
+    (new \App\Telegram\Currency())->getDataFromBank();
+})->daily();

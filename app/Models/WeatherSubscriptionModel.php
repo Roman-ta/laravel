@@ -12,7 +12,7 @@ class WeatherSubscriptionModel extends Model
 
     protected $table = 'weather_subscriptions';
     protected $fillable = [
-        'chatId',
+        'chat_id',
         'name',
         'city',
         'hour',

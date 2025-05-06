@@ -2,6 +2,8 @@
 
 namespace App\Telegram;
 
+use App\Models\AgroBankModel;
+use App\Models\CurrencyModel;
 use DefStudio\Telegraph\Facades\Telegraph;
 use DefStudio\Telegraph\Handlers\WebhookHandler;
 use DefStudio\Telegraph\Keyboard\Keyboard;
@@ -9,7 +11,6 @@ use DefStudio\Telegraph\Models\TelegraphChat;
 use DiDom\Document;
 use GuzzleHttp\Client;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class Currency extends WebhookHandler
@@ -28,108 +29,140 @@ class Currency extends WebhookHandler
         $this->document = new Document();
     }
 
+    /**
+     * @param TelegraphChat $chat
+     * @return void
+     */
     public function getCurrency(TelegraphChat $chat): void
     {
-        $chatInfo = $chat->info();
-        $customerName = $chatInfo['first_name'];
-        $currencyArray = DB::table('currency_list')->get();
-        $currencyArray = json_decode(json_encode($currencyArray), true);
         try {
+            $chatInfo = $chat->info();
+            $customerName = $chatInfo['first_name'] ?? '';
+            $currencyArray = CurrencyModel::all()->toArray();
             $keyboard = Keyboard::make();
-            foreach ($currencyArray as $key => $currency) {
+            foreach ($currencyArray as $currency) {
                 $keyboard->button($currency['flag'] . $currency['text'])->action('currency')->param('step', 2)
-                    ->param('from', $currency['currency'])->param('name', $customerName)->width(1 / count($currencyArray));
+                    ->param('from', $currency['currency'])->width(1 / count($currencyArray));
             }
             $keyboard->button('🔙 back')->action('start')->width(1);
-            Telegraph::bot($this->botToken)->chat($chat->chat_id)
+            Telegraph::chat($chat->chat_id)
                 ->message("👋 Привет, *{$customerName}*!\n\nДавай начнём обмен валют. Сначала выбери, *из какой валюты* ты хочешь перевести 💱")
                 ->keyboard($keyboard)->send();
         } catch (\Exception $e) {
-            Log::error('Error while sending message: ' . $e->getMessage());
+            Log::error('Error getCurrency() method ' . $e->getMessage());
         }
     }
 
     /**
+     * @param TelegraphChat $chat
+     * @param $from
      * @return void
      */
-    public function exchange(TelegraphChat $chat, $callBack, $from): void
+    public function exchange(TelegraphChat $chat, $from): void
     {
-        $customerName = $callBack->from()->firstName();
-        $currencyArray = DB::table('currency_list')->get();
-        $currencyArray = json_decode(json_encode($currencyArray), true);
-
+        $currencyArray = CurrencyModel::all()->toArray();
         try {
             $keyboard = Keyboard::make();
-            foreach ($currencyArray as $key => $label) {
+            foreach ($currencyArray as $label) {
                 if ($label['currency'] == $from) {
                     continue;
                 }
                 $keyboard->button($label['flag'] . $label['text'])->action('currency')
                     ->param('step', 3)->param('to', $label['currency'])->param('from', $from)->width(1 / count($currencyArray));
             }
-            $keyboard->button('🔙 back')->action('currency')->param('step', 1)->param('name', $customerName)->width(1);
-            Telegraph::bot($this->botToken)->chat($chat->chat_id)
+            $keyboard->button('🔙 back')->action('currency')->param('step', 1)->width(1);
+            Telegraph::chat($chat->chat_id)
                 ->message("👍 Отлично, ты выбрал *{$from}*.\n\nТеперь выбери, *в какую валюту* ты хочешь перевести 💹")
                 ->keyboard($keyboard)
                 ->send();
         } catch (\Exception $e) {
-            Log::error('Error while sending message: ' . $e->getMessage());
+            Log::error('Error exchange() method: ' . $e->getMessage());
         }
     }
 
 
     /**
      * @param TelegraphChat $chat
-     * @param $callBack
      * @param $from
      * @param $to
      * @return void
      */
-    public function exchangeTo(TelegraphChat $chat, $callBack, $from, $to): void
+    public function exchangeTo(TelegraphChat $chat, $from, $to): void
     {
-        $chatId = $chat->chat_id;
-        $keyboard = Keyboard::make()->button('🔙 back')->action('currency')->param('step', 2)->param('from', $from)->param('to', $to)->width(1);
-        Telegraph::bot($this->botToken)->chat($chatId)
-            ->message("📥 Перевод из *{$from}* в *{$to}*\n\n💰 Введи сумму, которую хочешь обменять.")
-            ->keyboard($keyboard)
-            ->send();
-        Cache::put("exchange-{$chatId}", [
-            'from' => $from,
-            'to' => $to,
-            'controller' => 'currency'
-        ], now()->addMinutes(10));
+        try {
+            $chatId = $chat->chat_id;
+            $keyboard = Keyboard::make()->button('🔙 back')->action('currency')->param('step', 2)->param('from', $from)->param('to', $to)->width(1);
+            Telegraph::bot($this->botToken)->chat($chatId)
+                ->message("📥 Перевод из *{$from}* в *{$to}*\n\n💰 Введи сумму, которую хочешь обменять.")
+                ->keyboard($keyboard)
+                ->send();
+            Cache::put("exchange-{$chatId}", [
+                'from' => $from,
+                'to' => $to,
+                'controller' => 'currency'
+            ], now()->addMinutes(10));
+        } catch (\Exception $e) {
+            Log::error('Error exchangeTo() method ' . $e->getMessage());
+        }
+
     }
 
     /**
-     * @return array
+     * @return array|void
+     * @throws \GuzzleHttp\Exception\GuzzleException
      */
-    public function getDataFromBank(): array
+    public function getDataFromBank()
     {
         try {
             $response = $this->client->get($this->bankUrl);
             $html = $response->getBody()->getContents();
+
+            if (empty($html)) {
+                throw new \Exception('Empty HTML response from bank');
+            }
+
             $this->document->loadHTML($html);
+
             $currencyItems = $this->document->find('#rate-ib tbody tr td:nth-child(2)');
             $currencyBuy = $this->document->find('.exchange-rates-item tbody tr td:nth-child(3)');
             $currencySel = $this->document->find('.exchange-rates-item tbody tr td:nth-child(4)');
-            $result = [];
+
+            if (!$currencyItems || !$currencyBuy || !$currencySel) {
+                throw new \Exception('Failed to parse HTML elements');
+            }
+
+            $records = [];
+
             foreach ($currencyItems as $key => $item) {
                 $dataValue1 = $item->getAttribute('data-name1') ?: 'N/A';
                 $dataValue2 = $item->getAttribute('data-name2') ?: 'N/A';
                 $dataBuy = isset($currencyBuy[$key]) ? $currencyBuy[$key]->text() : 'N/A';
                 $dataSel = isset($currencySel[$key]) ? $currencySel[$key]->text() : 'N/A';
-                $result[] = [
-                    0 => $dataValue1,
-                    1 => $dataValue2,
+
+                $records[] = [
+                    'from' => $dataValue1,
+                    'to' => $dataValue2,
                     'buy' => $dataBuy,
                     'sell' => $dataSel,
+                    'updated_at' => now(),
+                    'created_at' => now(),
                 ];
             }
-            return $result;
+
+            AgroBankModel::upsert(
+                $records,
+                ['from', 'to'],
+                ['buy', 'sell', 'updated_at']
+            );
+
         } catch (\Exception $e) {
-            Log::error('Error while sending message: ' . $e->getMessage());
+            Log::error('Error while fetching bank data: ' . $e->getMessage());
             return [];
         }
+    }
 
+    public function getActualCurrencyFromBank(): array
+    {
+        return AgroBankModel::all()->toArray();
     }
 }
