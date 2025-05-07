@@ -13,20 +13,23 @@ use GuzzleHttp\Client;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
+/**
+ *  Currency information
+ */
 class Currency extends WebhookHandler
 {
     private object|null $client;
-
-    private string|null $botToken;
     private string $bankUrl;
     private object|null $document;
+    private array $currency;
 
     public function __construct()
     {
+        parent::__construct();
         $this->client = new Client();
-        $this->botToken = env('BOT_TOKEN', '');
         $this->bankUrl = "https://www.agroprombank.com/";
         $this->document = new Document();
+        $this->currency = CurrencyModel::all()->toArray();
     }
 
     /**
@@ -37,12 +40,11 @@ class Currency extends WebhookHandler
     {
         try {
             $chatInfo = $chat->info();
-            $customerName = $chatInfo['first_name'] ?? '';
-            $currencyArray = CurrencyModel::all()->toArray();
+            $customerName = $chatInfo['first_name'];
             $keyboard = Keyboard::make();
-            foreach ($currencyArray as $currency) {
+            foreach ($this->currency as $currency) {
                 $keyboard->button($currency['flag'] . $currency['text'])->action('currency')->param('step', 2)
-                    ->param('from', $currency['currency'])->width(1 / count($currencyArray));
+                    ->param('from', $currency['currency'])->width(1 / count($this->currency));
             }
             $keyboard->button('🔙 back')->action('start')->width(1);
             Telegraph::chat($chat->chat_id)
@@ -60,15 +62,15 @@ class Currency extends WebhookHandler
      */
     public function exchange(TelegraphChat $chat, $from): void
     {
-        $currencyArray = CurrencyModel::all()->toArray();
         try {
             $keyboard = Keyboard::make();
-            foreach ($currencyArray as $label) {
-                if ($label['currency'] == $from) {
-                    continue;
+            foreach ($this->currency as $label) {
+
+                if ($label['currency'] !== $from) {
+                    $keyboard->button($label['flag'] . $label['text'])->action('currency')
+                        ->param('step', 3)->param('to', $label['currency'])->param('from', $from)->width(1 / count($this->currency));
                 }
-                $keyboard->button($label['flag'] . $label['text'])->action('currency')
-                    ->param('step', 3)->param('to', $label['currency'])->param('from', $from)->width(1 / count($currencyArray));
+
             }
             $keyboard->button('🔙 back')->action('currency')->param('step', 1)->width(1);
             Telegraph::chat($chat->chat_id)
@@ -89,22 +91,14 @@ class Currency extends WebhookHandler
      */
     public function exchangeTo(TelegraphChat $chat, $from, $to): void
     {
-        try {
-            $chatId = $chat->chat_id;
-            $keyboard = Keyboard::make()->button('🔙 back')->action('currency')->param('step', 2)->param('from', $from)->param('to', $to)->width(1);
-            Telegraph::bot($this->botToken)->chat($chatId)
-                ->message("📥 Перевод из *{$from}* в *{$to}*\n\n💰 Введи сумму, которую хочешь обменять.")
-                ->keyboard($keyboard)
-                ->send();
-            Cache::put("exchange-{$chatId}", [
-                'from' => $from,
-                'to' => $to,
-                'controller' => 'currency'
-            ], now()->addMinutes(10));
-        } catch (\Exception $e) {
-            Log::error('Error exchangeTo() method ' . $e->getMessage());
-        }
+        Cache::put("exchange-{$chat->chat_id}", ['from' => $from, 'to' => $to, 'controller' => 'currency'], now()->addMinutes(10));
 
+        $keyboard = Keyboard::make()->button('🔙 back')->action('currency')->param('step', 2)->param('from', $from)->param('to', $to)->width(1);
+
+        Telegraph::chat($chat->chat_id)
+            ->message("📥 Перевод из *{$from}* в *{$to}*\n\n💰 Введи сумму, которую хочешь обменять.")
+            ->keyboard($keyboard)
+            ->send();
     }
 
     /**

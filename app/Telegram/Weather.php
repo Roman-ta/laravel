@@ -4,11 +4,8 @@ namespace App\Telegram;
 
 use DefStudio\Telegraph\Facades\Telegraph;
 use DefStudio\Telegraph\Handlers\WebhookHandler;
-use DefStudio\Telegraph\Keyboard\ReplyButton;
-use DefStudio\Telegraph\Keyboard\ReplyKeyboard;
 use DefStudio\Telegraph\Models\TelegraphChat;
 use GuzzleHttp\Client;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -17,73 +14,68 @@ use Illuminate\Support\Facades\Log;
 class Weather extends WebhookHandler
 {
     public string|null $weatherApi;
-    private string|null $botToken;
     private object|null $client;
 
-    /**
-     *
-     */
     public function __construct()
     {
+        parent::__construct();
         $this->weatherApi = env('WEATHER_API', '');
-        $this->botToken = env('BOT_TOKEN', '');
         $this->client = new Client();
     }
 
     /**
      * @param TelegraphChat $chat
-     * @return void
-     */
-    public function startWeather(TelegraphChat $chat): void
-    {
-
-        Telegraph::chat($chat->chat_id)->message("Отлично, ты хочешь узнать погоду, пиши город")->send();
-        Cache::put("weather-{$chat->chat_id}", [
-            'controller' => 'weather'
-        ], now()->addMinutes(10));
-    }
-
-    /**
-     * @param TelegraphChat $chat
      * @param string $city
      * @param string $api
      * @return void
      * @throws \GuzzleHttp\Exception\GuzzleException
      */
-    public function today(TelegraphChat $chat, string $city = '', string $api = 'weather'): void
+    public function getWeathers(TelegraphChat $chat, string $city = '', string $api = 'weather'): void
     {
         try {
-            $result = $this->getWeatherApiResult($city, $api);
-            $response = $this->getWeatherForDay($result);
-            Telegraph::chat($chat->chat_id)
-                ->photo($response['photo'])
-                ->message($response['message'])
-                ->send();
+            $result = $this->getDefaultWeatherResult($city, $api);
+            if ($result) {
+                if ($api === 'weather') {
+                    $response = $this->getWeatherForDay($result);
+                } else {
+                    $response = $this->getWeatherForWeek($result);
+                }
+                Telegraph::chat($chat->chat_id)
+                    ->photo($response['photo'])
+                    ->message($response['message'])
+                    ->send();
+            }
         } catch (\Exception $e) {
             Log::error('Error while sending message: ' . $e->getMessage());
         }
     }
 
+
     /**
-     * @param TelegraphChat $chat
      * @param string $city
      * @param string $api
-     * @return void
+     * @return array|null
      * @throws \GuzzleHttp\Exception\GuzzleException
      */
-    public function week(TelegraphChat $chat, string $city, string $api = 'weather'): void
+    public function getDefaultWeatherResult(string $city, string $api = "weather"): ?array
     {
         try {
-            $result = $this->getWeatherApiResult($city, $api);
-            $response = $this->getWeatherForWeek($result);
-            Telegraph::chat($chat->chat_id)
-                ->photo($response['photo'])
-                ->message($response['message'])
-                ->send();
+            $response = $this->client->request('GET', "https://api.openweathermap.org/data/2.5/{$api}", [
+                'query' => [
+                    'q' => $city,
+                    'appid' => $this->weatherApi,
+                    'units' => 'metric',
+                    'lang' => 'ru'
+                ]
+            ]);
+            if ($response->getStatusCode() !== 200) {
+                return null;
+            }
+            return json_decode($response->getBody(), true);
         } catch (\Exception $e) {
-            Log::error('Error while sending message: ' . $e->getMessage());
+            Log::error('Ошибка в обработке погоды: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            return null;
         }
-
     }
 
     /**
@@ -115,27 +107,6 @@ class Weather extends WebhookHandler
         ];
     }
 
-    /**
-     * @param $city
-     * @param string $api
-     * @return array
-     * @throws \GuzzleHttp\Exception\GuzzleException
-     */
-    public function getWeatherApiResult($city, string $api = "weather"): array|bool
-    {
-        $res = $this->client->request('GET', "https://api.openweathermap.org/data/2.5/{$api}", [
-            'query' => [
-                'q' => $city,
-                'appid' => $this->weatherApi,
-                'units' => 'metric',
-                'lang' => 'ru'
-            ]
-        ]);
-        if ($res->getStatusCode() !== 200) {
-            return false;
-        }
-        return json_decode($res->getBody(), true);
-    }
 
     /**
      * @param $res
@@ -143,12 +114,7 @@ class Weather extends WebhookHandler
      */
     private function getWeatherForDay($res)
     {
-        if (empty($res)) {
-            log::debug('Ответ api пустой');
-            $this->reply('Ошибка в api');
-        }
         try {
-            // Получаем данные о погоде
             $icon = $res['weather'][0]['icon'] ?? '01d';
             $icons = "https://openweathermap.org/img/wn/{$icon}@4x.png";
             $temperature = round($res['main']['temp'] ?? 0, 1);
@@ -158,94 +124,12 @@ class Weather extends WebhookHandler
             $responseMessage = "🌡 Температура в городе *{$res['name']}*:  *{$temperature}°C* ({$res['weather'][0]['description']})\n";
             $responseMessage .= "😌 Ощущается как: *{$temperatureFeels}°C*\n";
             $responseMessage .= "💨 Скорость ветра: *{$windSpeed} м/с*";
-            return  [
+            return [
                 'message' => $responseMessage,
                 'photo' => $icons,
             ];
         } catch (\Exception $e) {
             Log::error('Error while sending message: ' . $e->getMessage());
-        }
-
-    }
-
-    /**
-     * @return void
-     */
-    public function weather_subs(): void
-    {
-        $customer = $this->message->from();
-        $keyBoard = ReplyKeyboard::make();
-
-        Telegraph::bot($this->botToken)->chat($this->chat->chat_id)
-            ->message('Я могу отправлять сообщение с данными о погоде в удобное для тебя время, выбери')
-            ->replyKeyboard($keyBoard
-                ->row([
-                    ReplyButton::make('7:00'),
-                    ReplyButton::make('7:30'),
-                    ReplyButton::make('8:00'),
-                    ReplyButton::make('8:30'),
-                ])->row([
-                    ReplyButton::make('9:00'),
-                    ReplyButton::make('9:30'),
-                    ReplyButton::make('10:00'),
-                    ReplyButton::make('10:30'),
-                ])
-                ->row([
-                    ReplyButton::make('11:00'),
-                    ReplyButton::make('11:30'),
-                    ReplyButton::make('12:00'),
-                    ReplyButton::make('12:30'),
-                ])->row([
-                    ReplyButton::make('13:00'),
-                    ReplyButton::make('13:30'),
-                    ReplyButton::make('14:00'),
-                    ReplyButton::make('14:30'),
-                ])
-                ->row([
-                    ReplyButton::make('15:00'),
-                    ReplyButton::make('15:30'),
-                    ReplyButton::make('16:00'),
-                    ReplyButton::make('16:30'),
-                ])->row([
-                    ReplyButton::make('17:00'),
-                    ReplyButton::make('17:30'),
-                    ReplyButton::make('18:00'),
-                    ReplyButton::make('18:30'),
-                ])
-                ->row([
-                    ReplyButton::make('19:00'),
-                    ReplyButton::make('19:30'),
-                    ReplyButton::make('20:00'),
-                    ReplyButton::make('20:30'),
-                ])
-            )
-            ->send();
-        Cache::put('weather_subs-' . $this->chat->chat_id, [
-            'idCustomer' => $customer->id(),
-            'name' => $customer->username(),
-        ], now()->addMinute(10));
-    }
-
-    /**
-     * @param string $message
-     * @return array|null
-     * @throws \GuzzleHttp\Exception\GuzzleException
-     */
-    public function getDefaultWeatherResult(string $message): ?array
-    {
-        try {
-            $weather = $this->client->request('GET', "https://api.openweathermap.org/data/2.5/weather", [
-                'query' => [
-                    'q' => $message,
-                    'appid' => $this->weatherApi,
-                    'units' => 'metric',
-                    'lang' => 'ru'
-                ]
-            ]);
-            return json_decode($weather->getBody(), true);
-        } catch (\Exception $e) {
-            Log::error('Ошибка в обработке погоды: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
-            return null;
         }
     }
 }
