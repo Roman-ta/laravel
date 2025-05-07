@@ -9,12 +9,12 @@ use Illuminate\Database\Eloquent\Model;
  */
 class CurrencySubscriptionModel extends Model
 {
+    protected $table = 'currency_subscription';
     protected $fillable = [
         'chat_id',
         'name',
         'hour',
         'minute',
     ];
-    protected $table = 'currency_subscription';
 
 }

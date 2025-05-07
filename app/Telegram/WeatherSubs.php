@@ -8,18 +8,13 @@ use DefStudio\Telegraph\Handlers\WebhookHandler;
 use DefStudio\Telegraph\Keyboard\Button;
 use DefStudio\Telegraph\Keyboard\Keyboard;
 use DefStudio\Telegraph\Models\TelegraphChat;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Weather subs подписка на погоду
  */
 class WeatherSubs extends WebhookHandler
 {
-    private string|null $botToken;
-
-    public function __construct()
-    {
-        $this->botToken = env('BOT_TOKEN', '');
-    }
 
     /**
      * @param TelegraphChat $chat
@@ -28,20 +23,8 @@ class WeatherSubs extends WebhookHandler
      */
     public function start(TelegraphChat $chat, $city): void
     {
-        $keyboard = Keyboard::make();
-        $row = [];
-        for ($i = 0; $i < 24; $i++) {
-            $hour = (string)$i;
-            if (strlen($hour) < 2) {
-                $hour = '0' . $hour;
-            }
-            $row[] = Button::make($hour)->action('subWeather')->param('hour', $hour)->param('step', 2)->param('city', $city);
-        }
-        $chunks = array_chunk($row, 6);
-        foreach ($chunks as $chunk) {
-            $keyboard->row($chunk);
-        }
-        Telegraph::bot($this->botToken)->chat($chat->chat_id)
+        $keyboard = Helper::getHoursKeyboard("subWeather", $city);
+        Telegraph::chat($chat->chat_id)
             ->message("Супер ты выбрал город *{$city}*  теперь настроим точное время, сперва выбери час")
             ->keyboard($keyboard)
             ->send();
@@ -53,23 +36,12 @@ class WeatherSubs extends WebhookHandler
      * @param $city
      * @return void
      */
-    public function getHour(TelegraphChat $chat, $hour, $city)
+    public function getHour(TelegraphChat $chat, $hour, $city): void
     {
-        $keyboard = Keyboard::make();
-        $row = [];
-        for ($i = 0; $i < 60; $i += 5) {
-            $minute = (string)$i;
-            if (strlen($minute) < 2) {
-                $minute = '0' . $minute;
-            }
-            $row[] = Button::make($minute)->action('subWeather')->param('hour', $hour)->param('minute', $minute)->param('step', 3)->param('city', $city);
-        }
-        $chunks = array_chunk($row, 6);
-        foreach ($chunks as $chunk) {
-            $keyboard->row($chunk);
-        }
+        $keyboard = Helper::getMinutesKeyboard("subWeather", $hour, $city);
         $keyboard->button('🔙 back')->action('subWeather')->param('step', 1)->width(1)->param('city', $city);
-        Telegraph::bot($this->botToken)->chat($chat->chat_id)
+
+        Telegraph::chat($chat->chat_id)
             ->message('Отлично, теперь выбери минуты')
             ->keyboard($keyboard)
             ->send();
@@ -82,7 +54,7 @@ class WeatherSubs extends WebhookHandler
      * @param $city
      * @return void
      */
-    public function getminute(TelegraphChat $chat, $hour, $minute, $city)
+    public function getMinute(TelegraphChat $chat, $hour, $minute, $city): void
     {
         $keyboard = Keyboard::make();
         $keyboard->button('🔙 back')->action('subWeather')->param('step', 2)->param('hour', $hour)->width(0.5)->param('city', $city);
@@ -100,52 +72,61 @@ class WeatherSubs extends WebhookHandler
      * @param $minute
      * @param $city
      * @return void
-     * @throws \DefStudio\Telegraph\Exceptions\TelegraphException
      */
-    public function finish(TelegraphChat $chat, $hour, $minute, $city)
+    public function finish(TelegraphChat $chat, $hour, $minute, $city): void
     {
-        $chatInfo = $chat->info();
+        try {
+            $chatInfo = $chat->info();
 
-        Telegraph::chat($chat->chat_id)
-            ->message("Теперь каждый день в *{$hour}:{$minute}* ты будешь получать уведомление о погоде в городе *{$city}*")
-            ->send();
+            Telegraph::chat($chat->chat_id)
+                ->message("Теперь каждый день в *{$hour}:{$minute}* ты будешь получать уведомление о погоде в городе *{$city}*")
+                ->send();
 
-        $customerSubscriptionExists = WeatherSubscriptionModel::where('chat_id', $chat->chat_id)->exists();
-        if (!$customerSubscriptionExists) {
-            WeatherSubscriptionModel::create([
-                'chat_id' => $chat->chat_id,
-                'name' => $chatInfo['first_name'],
-                'city' => $city,
-                'hour' => $hour,
-                'minute' => $minute,
-            ]);
-        } else {
-            WeatherSubscriptionModel::where('chat_id', $chat->chat_id)->update([
-                'city' => $city,
-                'hour' => $hour,
-                'minute' => $minute,
-            ]);
+            $customerSubscriptionExists = WeatherSubscriptionModel::where('chat_id', $chat->chat_id)->exists();
+            if (!$customerSubscriptionExists) {
+                WeatherSubscriptionModel::create([
+                    'chat_id' => $chat->chat_id,
+                    'name' => $chatInfo['first_name'],
+                    'city' => $city,
+                    'hour' => $hour,
+                    'minute' => $minute,
+                ]);
+            } else {
+                WeatherSubscriptionModel::where('chat_id', $chat->chat_id)->update([
+                    'city' => $city,
+                    'hour' => $hour,
+                    'minute' => $minute,
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error($e->getMessage());
         }
-
     }
 
     /**
      * @return void
      * @throws \GuzzleHttp\Exception\GuzzleException
      */
-    public function getSubscriptionWeather()
+    public function getSubscriptionWeather(): void
     {
-        $customerSubscriptions = WeatherSubscriptionModel::all();
-        $currentTime = date('H:i');
-        foreach ($customerSubscriptions as $customerSubscription) {
-            $time = $customerSubscription['hour'] . ':' . $customerSubscription['minute'];
-            if ($time == $currentTime) {
-                Telegraph::chat($customerSubscription['chat_id'])
-                    ->message("Привет *{$customerSubscription['name']}* спасибо за подписку на погоду, вот она")
-                    ->send();
-                $chat = TelegraphChat::where('chat_id', $customerSubscription['chat_id'])->first();
-                (new Weather())->today($chat, $customerSubscription['city']);
+        try {
+            $customerSubscriptions = WeatherSubscriptionModel::all();
+            $currentTime = date('H:i');
+            foreach ($customerSubscriptions as $customerSubscription) {
+                $hour = Helper::addZeroForTime($customerSubscription['hour']);
+                $minute = Helper::addZeroForTime($customerSubscription['minute']);
+                $time = $hour . ':' . $minute;
+
+                if ($time == $currentTime) {
+                    $chat = TelegraphChat::where('chat_id', $customerSubscription['chat_id'])->first();
+                    Telegraph::chat($chat->chat_id)
+                        ->message("Привет *{$customerSubscription['name']}* спасибо за подписку на погоду, вот она")
+                        ->send();
+                    (new Weather())->getWeathers($chat, $customerSubscription['city']);
+                }
             }
+        } catch (\Exception $e) {
+            Log::error($e->getMessage());
         }
     }
 }
